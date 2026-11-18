@@ -1,0 +1,100 @@
+# Pimlico's Alto bundler and paymasters on a Tenderly Virtual Environment.
+#
+#   docker compose up -d                     # bundler only
+#   docker compose --profile mock up -d      # + Pimlico's mock verifying / ERC-20 paymaster
+#   docker compose --profile policy up -d    # + policy paymaster (own signer, allowlists, cap)
+
+x-alto-image: &alto-image ghcr.io/pimlicolabs/alto:v1.2.8
+
+# One-shot job that funds keys from the Virtual Environment's pre-funded
+# accounts. It sends unsigned transfers, which need the Admin RPC.
+x-funder: &funder
+  image: *alto-image
+  entrypoint: ["node", "/app/src/fund-accounts.mjs"]
+  volumes:
+    - ./setup/fund-accounts.mjs:/app/src/fund-accounts.mjs:ro
+  restart: "no"
+
+services:
+  funder:
+    <<: *funder
+    environment:
+      RPC_URL: ${TENDERLY_ADMIN_RPC_URL:?set TENDERLY_ADMIN_RPC_URL in .env}
+      FUND_PRIVATE_KEYS: ${ALTO_UTILITY_PRIVATE_KEY:?run scripts/init-env.sh},${ALTO_EXECUTOR_PRIVATE_KEYS:?run scripts/init-env.sh}
+      FUND_AMOUNT_ETH: ${FUND_AMOUNT_ETH:-10}
+
+  alto:
+    image: *alto-image
+    entrypoint: ["node", "src/lib/cli/alto.js", "run"]
+    ports: ["${ALTO_PORT:-4337}:4337"]
+    environment:
+      ALTO_RPC_URL: ${TENDERLY_PUBLIC_RPC_URL:?set TENDERLY_PUBLIC_RPC_URL in .env}
+      ALTO_ENTRYPOINTS: 0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789,0x0000000071727De22E5E9d8BAf0edAc6f37da032,0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108
+      ALTO_UTILITY_PRIVATE_KEY: ${ALTO_UTILITY_PRIVATE_KEY}
+      ALTO_EXECUTOR_PRIVATE_KEYS: ${ALTO_EXECUTOR_PRIVATE_KEYS}
+      # Safe mode traces validation with a custom JavaScript tracer
+      # (debug_traceCall), which Virtual Environments don't run.
+      ALTO_SAFE_MODE: "false"
+      ALTO_CHAIN_TYPE: ${ALTO_CHAIN_TYPE:-default}
+      # debug_bundler_* methods for test tooling. They don't replace a restart
+      # after evm_revert.
+      ALTO_ENABLE_DEBUG_ENDPOINTS: "true"
+      ALTO_PORT: "4337"
+      ALTO_LOG_LEVEL: ${ALTO_LOG_LEVEL:-info}
+      ALTO_PUBLIC_CLIENT_LOG_LEVEL: ${ALTO_PUBLIC_CLIENT_LOG_LEVEL:-error}
+      ALTO_WALLET_CLIENT_LOG_LEVEL: error
+    depends_on:
+      funder:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4337/health"]
+      interval: 2s
+      timeout: 2s
+      retries: 60
+
+  mock-paymaster:
+    profiles: ["mock"]
+    image: ghcr.io/pimlicolabs/mock-verifying-paymaster@sha256:df79a80c01d8d9bef5c1c9a938dd10cb466f3c0a00bee6c953432c5e9435273a
+    ports: ["${MOCK_PAYMASTER_PORT:-3000}:3000"]
+    environment:
+      ALTO_RPC: http://alto:4337
+      # Admin RPC: on boot the mock paymaster tops up its deployer with
+      # anvil_setBalance, which the Public RPC refuses.
+      ANVIL_RPC: ${TENDERLY_ADMIN_RPC_URL}
+    depends_on:
+      alto:
+        condition: service_healthy
+    # Startup deploys contracts; retry if an RPC request times out.
+    restart: on-failure:3
+
+  policy-funder:
+    <<: *funder
+    profiles: ["policy"]
+    environment:
+      RPC_URL: ${TENDERLY_ADMIN_RPC_URL}
+      FUND_PRIVATE_KEYS: ${POLICY_SIGNER_PRIVATE_KEY:?run scripts/init-env.sh}
+      FUND_AMOUNT_ETH: ${POLICY_FUND_AMOUNT_ETH:-5}
+
+  # Reference ERC-7677 paymaster: own signer, allowlists, per-sender cap.
+  # Needs only the Public RPC.
+  policy-paymaster:
+    profiles: ["policy"]
+    build: ./policy-paymaster
+    ports: ["${POLICY_PAYMASTER_PORT:-3100}:3100"]
+    environment:
+      RPC_URL: ${TENDERLY_PUBLIC_RPC_URL}
+      SIGNER_PRIVATE_KEY: ${POLICY_SIGNER_PRIVATE_KEY}
+      API_KEYS: ${POLICY_API_KEYS:?run scripts/init-env.sh}
+      ALLOWED_SENDERS: ${POLICY_ALLOWED_SENDERS:-}
+      ALLOWED_TARGETS: ${POLICY_ALLOWED_TARGETS:-}
+      MAX_SPEND_PER_SENDER_ETH: ${POLICY_MAX_SPEND_PER_SENDER_ETH:-0.01}
+      DEPOSIT_ETH: ${POLICY_DEPOSIT_ETH:-1}
+    depends_on:
+      policy-funder:
+        condition: service_completed_successfully
+    restart: on-failure:3
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3100/health"]
+      interval: 2s
+      timeout: 2s
+      retries: 60

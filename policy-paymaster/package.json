@@ -1,0 +1,11 @@
+{
+    "name": "policy-paymaster",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "start": "node src/index.ts"
+    },
+    "dependencies": {
+        "viem": "2.57.7"
+    }
+}

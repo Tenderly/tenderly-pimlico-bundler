@@ -1,0 +1,23 @@
+{
+    "name": "pimlico-virtual-environment-examples",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "bundler": "tsx --env-file=../.env src/01-bundler-only.ts",
+        "sponsored": "tsx --env-file=../.env src/02-sponsored.ts",
+        "erc20": "tsx --env-file=../.env src/03-erc20.ts",
+        "7702": "tsx --env-file=../.env src/04-eip7702.ts",
+        "policy": "tsx --env-file=../.env src/05-policy-paymaster.ts",
+        "snapshot": "tsx --env-file=../.env src/06-snapshot-revert.ts",
+        "typecheck": "tsc --noEmit"
+    },
+    "dependencies": {
+        "permissionless": "0.5.0",
+        "viem": "2.57.7"
+    },
+    "devDependencies": {
+        "@types/node": "22.15.3",
+        "tsx": "4.23.15",
+        "typescript": "5.9.3"
+    }
+}
